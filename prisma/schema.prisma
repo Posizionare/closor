@@ -1,0 +1,910 @@
+// =============================================
+// Growth CRM - Prisma Schema
+// Multi-tenant SaaS CRM (white label)
+// =============================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- Tenant / White label ----------
+
+model Tenant {
+  id            String   @id @default(cuid())
+  slug          String   @unique
+  name          String
+  legalName     String?
+  cnpj          String?
+  email         String?
+  phone         String?
+  address       String?
+
+  // Branding / White label
+  logoUrl       String?
+  faviconUrl    String?
+  systemName    String   @default("Closor")
+  primaryColor  String   @default("#0F172A") // azul escuro/preto
+  secondaryColor String  @default("#F97316") // laranja
+  accentColor   String   @default("#EF4444") // vermelho
+
+  // Dados comerciais
+  bankName      String?
+  bankAgency    String?
+  bankAccount   String?
+  pixKey        String?
+
+  // Assinatura do gestor (PNG base64) - anexada automaticamente em contratos
+  managerSignatureUrl  String?  @db.Text
+  managerSignerName    String?
+  managerSignerRole    String?  // ex.: Diretor Comercial
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  users               User[]
+  contacts            Contact[]
+  products            Product[]
+  pipelines           Pipeline[]
+  deals               Deal[]
+  tasks               Task[]
+  conversations       Conversation[]
+  conversionStatuses  ConversionStatus[]
+  proposalTemplates   ProposalTemplate[]
+  contractTemplates   ContractTemplate[]
+  emailTemplates      EmailTemplate[]
+  whatsappTemplates   WhatsappTemplate[]
+  goals               Goal[]
+  integrations        Integration[]
+  socialAccounts      SocialAccount[]
+  chatFlows           ChatFlow[]
+  tags                Tag[]
+  sectors             Sector[]
+  contracts           Contract[]
+  proposals           Proposal[]
+  automationFlows     AutomationFlow[]
+  notifications       Notification[]
+  whatsappConnections WhatsappConnection[]
+  subscription        Subscription?
+  invoices            Invoice[]
+  financeEntries      FinanceEntry[]
+}
+
+// ---------- Plano de assinatura do tenant ----------
+
+enum PlanTier {
+  ESSENCIAL
+  PROFISSIONAL
+  EMPRESARIAL
+}
+
+enum BillingCycle {
+  MENSAL
+  ANUAL
+}
+
+enum SubscriptionStatus {
+  AVALIACAO
+  ATIVA
+  INADIMPLENTE
+  CANCELADA
+}
+
+model Subscription {
+  id        String   @id @default(cuid())
+  tenantId  String   @unique
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  plan      PlanTier @default(ESSENCIAL)
+  cycle     BillingCycle @default(MENSAL)
+  status    SubscriptionStatus @default(AVALIACAO)
+  trialEndsAt DateTime?
+  currentPeriodEnd DateTime?
+  amount    Decimal? @db.Decimal(14, 2)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Invoice {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  number    String?
+  plan      PlanTier
+  cycle     BillingCycle
+  amount    Decimal  @db.Decimal(14, 2)
+  status    String   @default("PAGA") // PAGA | EM_ABERTO | ATRASADA | CANCELADA
+  periodStart DateTime
+  periodEnd   DateTime
+  paidAt    DateTime?
+  invoiceUrl String?
+  receiptUrl String?
+  createdAt DateTime @default(now())
+  @@index([tenantId, periodStart])
+}
+
+// ---------- Auth (NextAuth + credentials) ----------
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+  @@unique([identifier, token])
+}
+
+// ---------- User ----------
+
+enum CommercialRole {
+  SDR
+  VENDAS
+  PROSPECCAO
+  CLOSER
+  COMERCIAL
+  FINANCEIRO
+  SUPORTE
+  GESTOR
+  ADMIN
+  NENHUM
+}
+
+enum UserStatus {
+  ATIVO
+  INATIVO
+}
+
+model User {
+  id              String         @id @default(cuid())
+  tenantId        String
+  tenant          Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  name            String
+  email           String         @unique
+  emailVerified   DateTime?
+  passwordHash    String?
+  phone           String?
+  avatarUrl       String?
+
+  jobTitle        String?        // Cargo
+  sectorId        String?
+  sector          Sector?        @relation(fields: [sectorId], references: [id])
+
+  commercialRole  CommercialRole @default(NENHUM)
+  monthlyGoal     Decimal?       @db.Decimal(14, 2)
+  commissionRate  Decimal?       @db.Decimal(5, 2) // % comissão sobre vendas ganhas
+  status          UserStatus     @default(ATIVO)
+  isAdmin         Boolean        @default(false)
+
+  permissions     UserPermission[]
+  accounts        Account[]
+  sessions        Session[]
+  notifications   Notification[]
+
+  ownedDeals          Deal[]         @relation("DealOwner")
+  ownedConversations  Conversation[] @relation("ConvOwner")
+  ownedContacts       Contact[]      @relation("ContactOwner")
+  contactAssignments  ContactAssignment[]
+  assignedTasks       Task[]         @relation("TaskAssignee")
+  goals               Goal[]
+  contracts           Contract[]     @relation("ContractOwner")
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([tenantId])
+}
+
+model Sector {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
+  color     String?
+  users     User[]
+  createdAt DateTime @default(now())
+
+  @@unique([tenantId, name])
+}
+
+// ---------- Permissões ----------
+// Cada usuário pode ter um conjunto de permissões por módulo.
+// O módulo "WHATSAPP" sempre é permitido (forçado em runtime).
+
+enum AppModule {
+  WHATSAPP
+  CONVERSOES
+  REDES_SOCIAIS
+  AGENTE_CHAT
+  PRODUTOS
+  CONTRATOS
+  PROPOSTAS
+  TAREFAS
+  FUNIL
+  CONTATOS
+  AGENDA
+  METAS
+  RELATORIOS
+  INTEGRACOES
+  CONFIGURACOES
+}
+
+model UserPermission {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  module    AppModule
+  canView      Boolean @default(false)
+  canCreate    Boolean @default(false)
+  canEdit      Boolean @default(false)
+  canDelete    Boolean @default(false)
+  canExport    Boolean @default(false)
+  canConfigure Boolean @default(false)
+
+  @@unique([userId, module])
+}
+
+// ---------- Contatos ----------
+
+model Contact {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  name      String
+  company   String?
+  cpfCnpj   String?
+  email     String?
+  phone     String?
+  whatsapp  String?
+  address   String?
+
+  origin    String?  // Site, WhatsApp, Evento, GoogleAds, MetaAds, Instagram, TikTok, YouTube, Organico, Manual
+  notes     String?  @db.Text
+  logoUrl   String?  // logo do cliente (usada no topo do contrato)
+
+  // Vendedor / atendente responsável atual
+  ownerId   String?
+  owner     User?    @relation("ContactOwner", fields: [ownerId], references: [id])
+
+  tags          ContactTag[]
+  deals         Deal[]
+  conversations Conversation[]
+  tasks         Task[]
+  contracts     Contract[] @relation("ContactContracts")
+  proposals     Proposal[] @relation("ContactProposals")
+  assignments   ContactAssignment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([tenantId])
+}
+
+model Tag {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
+  color     String?
+  contacts  ContactTag[]
+  @@unique([tenantId, name])
+}
+
+model ContactTag {
+  contactId String
+  tagId     String
+  contact   Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  tag       Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  @@id([contactId, tagId])
+}
+
+// ---------- Produtos ----------
+
+enum PaymentMethod {
+  PIX
+  BOLETO
+  CARTAO
+  AVISTA
+}
+
+model Product {
+  id           String   @id @default(cuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name         String
+  description  String?  @db.Text
+  category     String?
+  imageUrl     String?
+  price        Decimal  @db.Decimal(14, 2)
+  active       Boolean  @default(true)
+  installments Boolean  @default(false)
+  maxInstallments Int   @default(1)
+  paymentMethods PaymentMethod[]
+  maxDiscount  Decimal? @db.Decimal(5, 2)
+  commission   Decimal? @db.Decimal(5, 2)
+
+  // Modelo de cobrança
+  billing       ProductBilling @default(UNICO)
+  durationMonths Int?    // duração do serviço em meses, quando MENSAL
+  sku           String?
+
+  dealItems    DealItem[]
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+enum ProductBilling {
+  UNICO    // pagamento único / produto
+  MENSAL   // mensalidade recorrente
+}
+
+// ---------- Funil de vendas ----------
+
+model Pipeline {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
+  isDefault Boolean  @default(false)
+  stages    PipelineStage[]
+  deals     Deal[]
+}
+
+model PipelineStage {
+  id          String   @id @default(cuid())
+  pipelineId  String
+  pipeline    Pipeline @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+  name        String
+  order       Int
+  type        String   @default("normal") // normal | won | lost
+  color       String?
+  deals       Deal[]
+}
+
+enum DealStatus {
+  ABERTO
+  GANHO
+  PERDIDO
+}
+
+model Deal {
+  id           String   @id @default(cuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  title        String
+  value        Decimal  @db.Decimal(14, 2) @default(0)
+  status       DealStatus @default(ABERTO)
+  origin       String?
+  notes        String?  @db.Text
+
+  contactId    String?
+  contact      Contact? @relation(fields: [contactId], references: [id])
+
+  ownerId      String?
+  owner        User?    @relation("DealOwner", fields: [ownerId], references: [id])
+
+  pipelineId   String
+  pipeline     Pipeline @relation(fields: [pipelineId], references: [id])
+  stageId      String
+  stage        PipelineStage @relation(fields: [stageId], references: [id])
+
+  items        DealItem[]
+  tasks        Task[]
+  history      DealHistory[]
+
+  wonAt        DateTime?
+  lostAt       DateTime?
+  expectedClose DateTime?
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  @@index([tenantId, stageId])
+}
+
+model DealItem {
+  id        String  @id @default(cuid())
+  dealId    String
+  deal      Deal    @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+  quantity  Int     @default(1)
+  unitPrice Decimal @db.Decimal(14, 2)
+  discount  Decimal @default(0) @db.Decimal(14, 2)
+}
+
+model DealHistory {
+  id        String   @id @default(cuid())
+  dealId    String
+  deal      Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  fromStage String?
+  toStage   String?
+  message   String?
+  userId    String?
+  createdAt DateTime @default(now())
+}
+
+// ---------- Tarefas ----------
+
+enum TaskStatus {
+  PENDENTE
+  EM_ANDAMENTO
+  CONCLUIDA
+  CANCELADA
+}
+
+model Task {
+  id          String     @id @default(cuid())
+  tenantId    String
+  tenant      Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  title       String
+  description String?    @db.Text
+  dueDate     DateTime?
+  status      TaskStatus @default(PENDENTE)
+  priority    String?    // baixa | media | alta
+
+  assigneeId  String?
+  assignee    User?      @relation("TaskAssignee", fields: [assigneeId], references: [id])
+
+  contactId   String?
+  contact     Contact?   @relation(fields: [contactId], references: [id])
+
+  dealId      String?
+  deal        Deal?      @relation(fields: [dealId], references: [id])
+
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+}
+
+// ---------- WhatsApp / Conversas ----------
+
+enum ConversationStatus {
+  NOVO
+  EM_ATENDIMENTO
+  AGUARDANDO_RESPOSTA
+  NEGOCIACAO
+  GANHO
+  PERDIDO
+  ENCERRADA
+}
+
+model Conversation {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contactId   String?
+  contact     Contact? @relation(fields: [contactId], references: [id])
+
+  channel     String   @default("whatsapp") // whatsapp | instagram | etc
+  status      ConversationStatus @default(NOVO)
+  origin      String?
+
+  ownerId     String?
+  owner       User?    @relation("ConvOwner", fields: [ownerId], references: [id])
+  sectorId    String?
+
+  lastMessageAt DateTime?
+  unreadCount   Int      @default(0)
+  scheduledMeetingAt DateTime?
+  scheduledMeetingTitle String?
+  scheduledMeetingLink String?
+
+  // Departamento responsável (Comercial, Suporte, Financeiro)
+  department  String?  @default("comercial")
+  // Protocolo gerado quando ambos lados encerram
+  protocol    String?  @unique
+  closedByOwner Boolean @default(false)
+  closedByClient Boolean @default(false)
+  closedAt    DateTime?
+
+  messages    Message[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  @@index([tenantId, status])
+  @@index([tenantId, department])
+}
+
+model Message {
+  id              String   @id @default(cuid())
+  conversationId  String
+  conversation    Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  direction       String   // inbound | outbound
+  body            String   @db.Text
+  mediaUrl        String?
+  mediaType       String?  // image | audio | video | file | gif
+  fileName        String?
+  authorUserId    String?
+  authorName      String?  // snapshot do nome do atendente no momento do envio
+  isSystem        Boolean  @default(false) // mensagens automáticas (transferência, lembrete etc.)
+  createdAt       DateTime @default(now())
+}
+
+// ---------- Financeiro ----------
+// Cada contrato fechado gera um lançamento. Tipo UNICO (serviço único) ou RECORRENTE (mensalidade).
+
+enum FinanceKind {
+  UNICO
+  RECORRENTE
+}
+
+model FinanceEntry {
+  id          String      @id @default(cuid())
+  tenantId    String
+  tenant      Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  kind        FinanceKind @default(UNICO)
+  description String
+  amount      Decimal     @db.Decimal(14, 2)
+  contractId  String?
+  contactId   String?
+  ownerId     String?
+  // Para recorrentes
+  monthlyAmount Decimal?  @db.Decimal(14, 2)
+  durationMonths Int?
+  // Data em que o contrato foi criado (entra no financeiro nesse dia)
+  entryDate   DateTime    @default(now())
+  status      String      @default("EM_ABERTO") // EM_ABERTO | RECEBIDO | ATRASADO | CANCELADO
+  createdAt   DateTime    @default(now())
+  @@index([tenantId, kind])
+  @@index([tenantId, entryDate])
+}
+
+// Pedido de exclusão de contrato (quando não-admin solicita)
+model ContractDeletionRequest {
+  id          String   @id @default(cuid())
+  tenantId    String
+  contractId  String
+  requestedBy String
+  reason      String   @db.Text
+  status      String   @default("PENDENTE") // PENDENTE | APROVADO | REJEITADO
+  resolvedBy  String?
+  resolvedAt  DateTime?
+  createdAt   DateTime @default(now())
+}
+
+// ---------- Conversões ----------
+
+model ConversionStatus {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  origin      String   // GoogleAds | MetaAds | Instagram | YouTube | TikTok | Organico | Manual
+  component   String?
+  triggerMessage String? @db.Text
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+}
+
+// ---------- Modelos (templates) ----------
+
+model ProposalTemplate {
+  id            String   @id @default(cuid())
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name          String
+  coverUrl      String?  @db.Text  // pode ser data URL (upload base64)
+  closingUrl    String?  @db.Text  // legado: primeira imagem de encerramento
+  closingImages String?  @db.Text  // JSON: ["dataUrl1", "dataUrl2", ...]
+  primaryColor  String?
+  institutionalText String? @db.Text
+  commercialTerms   String? @db.Text
+  validityDays  Int      @default(15)
+  footer        String?  @db.Text
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+}
+
+model ContractTemplate {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
+  body      String   @db.Text
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
+
+model EmailTemplate {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
+  subject   String
+  body      String   @db.Text
+  kind      String   @default("custom") // proposal | welcome | followup | custom
+  active    Boolean  @default(true)
+}
+
+model WhatsappTemplate {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
+  body      String   @db.Text
+  kind      String   @default("custom") // welcome | proposal | reminder | custom
+  active    Boolean  @default(true)
+}
+
+// ---------- Metas ----------
+
+model Goal {
+  id            String   @id @default(cuid())
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  referenceMonth DateTime
+  monthlyValue  Decimal  @db.Decimal(14, 2) @default(0)
+  attendances   Int      @default(0)
+  prospects     Int      @default(0)
+  sales         Int      @default(0)
+  meetings      Int      @default(0)
+}
+
+// ---------- Integrações ----------
+
+model Integration {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  provider  String   // whatsapp | meta_ads | google_ads | google_calendar | google_meet | instagram | youtube | tiktok | smtp | webhook
+  name      String?
+  config    Json
+  connected Boolean  @default(false)
+  lastSyncAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@unique([tenantId, provider])
+}
+
+model SocialAccount {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  network   String   // instagram | youtube | tiktok
+  handle    String?
+  connected Boolean  @default(false)
+  lastSyncAt DateTime?
+  metrics   Json?
+  createdAt DateTime @default(now())
+}
+
+// ---------- Agente de chat / fluxos ----------
+
+model ChatFlow {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
+  trigger   String   // keyword | regex | default
+  keyword   String?
+  response  String?  @db.Text
+  action    String?  // create_lead | move_stage | assign_sector
+  sectorId  String?
+  active    Boolean  @default(true)
+  workingHoursStart String?
+  workingHoursEnd   String?
+  outOfHoursMessage String? @db.Text
+  createdAt DateTime @default(now())
+}
+
+// ---------- Automações visuais (esteira / fluxograma) ----------
+
+model AutomationFlow {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  layout      String   @default("esteira") // esteira | fluxograma
+  active      Boolean  @default(true)
+  nodes       Json     // [{id, type, position, data}]
+  edges       Json     // [{id, source, target, label}]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// ---------- Contratos firmados (instâncias) ----------
+
+enum ContractStatus {
+  RASCUNHO
+  ENVIADO
+  ASSINADO
+  VIGENTE
+  ENCERRADO
+  CANCELADO
+}
+
+model Contract {
+  id          String         @id @default(cuid())
+  tenantId    String
+  tenant      Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  number      String?        // ex.: CTR-2026-0001
+  title       String
+  body        String         @db.Text
+  status      ContractStatus @default(RASCUNHO)
+
+  contactId   String?
+  contact     Contact?       @relation("ContactContracts", fields: [contactId], references: [id])
+  dealId      String?
+  ownerId     String?
+  owner       User?          @relation("ContractOwner", fields: [ownerId], references: [id])
+
+  signedAt    DateTime?
+  startsAt    DateTime?
+  expiresAt   DateTime?      // vencimento -> dispara notificação
+  totalValue  Decimal?       @db.Decimal(14, 2)
+  paymentTerms String?
+
+  // Assinatura digital
+  signingToken String?       @unique  // link público /assinar/[token]
+  signerName  String?
+  signerCpf   String?
+  signerIp    String?
+  signatureBase64 String?    @db.Text
+
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  @@index([tenantId, status])
+  @@index([tenantId, expiresAt])
+}
+
+// ---------- Notificações (sino) ----------
+
+enum NotificationType {
+  DEAL_WON
+  DEAL_LOST
+  CONTRACT_EXPIRING
+  MEETING_SOON
+  GOAL_BEHIND
+  GOAL_ACHIEVED
+  TASK_DUE
+  CONVERSATION_NEW
+  GENERIC
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  tenantId  String
+  tenant    Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      NotificationType @default(GENERIC)
+  title     String
+  body      String?
+  url       String?
+  read      Boolean          @default(false)
+  createdAt DateTime         @default(now())
+  @@index([tenantId, userId, read])
+}
+
+// ---------- Conexão WhatsApp (QR / Cloud API) ----------
+
+enum WhatsappConnectionMode {
+  QR_CODE
+  CLOUD_API
+}
+
+enum WhatsappConnectionStatus {
+  DESCONECTADO
+  AGUARDANDO_QR
+  CONECTANDO
+  CONECTADO
+  ERRO
+}
+
+model WhatsappConnection {
+  id            String                   @id @default(cuid())
+  tenantId      String                   @unique
+  tenant        Tenant                   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  mode          WhatsappConnectionMode   @default(QR_CODE)
+  status        WhatsappConnectionStatus @default(DESCONECTADO)
+  phoneNumber   String?
+  displayName   String?
+  qrCodeData    String?                  @db.Text
+  // Cloud API
+  apiUrl        String?
+  apiToken      String?                  @db.Text
+  phoneId       String?
+  businessId    String?
+  lastConnectedAt DateTime?
+  createdAt     DateTime                 @default(now())
+  updatedAt     DateTime                 @updatedAt
+}
+
+// ---------- Propostas geradas (instâncias) ----------
+
+enum ProposalStatus {
+  RASCUNHO
+  ENVIADA
+  ACEITA
+  RECUSADA
+  EXPIRADA
+}
+
+model Proposal {
+  id            String         @id @default(cuid())
+  tenantId      String
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  number        String?        // ORC-2026-0001
+  title         String
+  status        ProposalStatus @default(RASCUNHO)
+
+  contactId     String?
+  contact       Contact?       @relation("ContactProposals", fields: [contactId], references: [id])
+  dealId        String?
+  ownerId       String?
+  templateId    String?        // modelo de orçamento usado
+
+  // snapshot dos dados (caso template/produto mudem depois)
+  totalValue    Decimal?       @db.Decimal(14, 2)
+  validUntil    DateTime?
+  itemsSnapshot Json?          // [{name, description, quantity, unitPrice, discount, billing, durationMonths, paymentDay}]
+
+  acceptToken   String?        @unique  // link público /aceitar/[token]
+  acceptedAt    DateTime?
+  acceptedBy    String?
+  acceptedIp    String?
+  rejectedAt    DateTime?
+  rejectionNote String?
+
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  @@index([tenantId, status])
+}
+
+// ---------- Histórico de atribuição de contato a vendedor ----------
+
+enum ContactAssignmentReason {
+  CRIACAO
+  TROCA_MANUAL
+  ATENDIMENTO_WHATSAPP
+  GANHO
+  PERDIDO
+  REDISTRIBUICAO
+}
+
+model ContactAssignment {
+  id        String   @id @default(cuid())
+  tenantId  String
+  contactId String
+  contact   Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reason    ContactAssignmentReason @default(TROCA_MANUAL)
+  outcome   String?  // ganho | perdido | em_andamento
+  note      String?
+  createdAt DateTime @default(now())
+  endedAt   DateTime?
+  @@index([tenantId, contactId])
+  @@index([tenantId, userId])
+}
