@@ -1,6 +1,8 @@
 import { LoginForm } from "@/components/auth/LoginForm";
 import { prisma } from "@/lib/prisma";
 
+export const dynamic = "force-dynamic";
+
 export default async function LoginPage() {
   const tenant = await prisma.tenant.findFirst().catch(() => null);
   const name = tenant?.systemName ?? "Closor";
@@ -66,3 +68,4 @@ export default async function LoginPage() {
     </div>
   );
 }
+
